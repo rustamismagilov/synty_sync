@@ -139,6 +139,21 @@ Within each slot, the local pack folder is scanned for files of the same slot. T
 
 `--no-icons` excludes ICON files. `--formats` excludes engine variants you don't want, but never affects icons, so use both flags together if needed.
 
+### Recognized filename patterns
+
+Synty's file naming is inconsistent across packs, but this tool handles every variant. Examples:
+
+| Example | Notes |
+|---|---|
+| `POLYGON_BattleRoyale_Unity_2022_3_v1_9_0.unitypackage` | Named engine + pack version |
+| `POLYGON_Halloween_Masks_2022_3_v1_2_0.unitypackage` | Bare engine version (no `Unity_` prefix) |
+| `SIMPLE_Space_Unreal_4.15_v1_0_0.zip` | Engine version with a `.` separator |
+| `POLYGON_BattleRoyale_Source_Files_v4.zip` | Source files with version |
+| `SIMPLE_Cars_SourceFiles.zip` | Source files without version |
+| `INTERFACE_Apocalypse_HUD_Source_Sprites_v3.zip` | Any `Source_*` variant, not just `Source_Files` |
+| `SidekickCharacterTool_0_4_0_UE53.zip` | UE family, no `_v…` version suffix |
+| `POLYGON_Fantasy_Characters_ICON.jpg` | Icon, any common image extension (`.png` / `.jpg` / `.jpeg` / `.webp`) |
+
 ### Output
 
 After parsing, you will be able to see a table of every planned file with columns `Status / Pack / New file / Destination`, and a summary table showing per-action count and total size, e.g.:

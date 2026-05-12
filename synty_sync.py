@@ -272,6 +272,12 @@ _VERSION_RE = re.compile(
     re.I,
 )
 
+# recognized variant suffix (trailing part of a heading that names a build, not the pack)
+_VARIANT_SUFFIX_RE = re.compile(
+    r"_(Source_?[A-Za-z][A-Za-z0-9_]*|Unity[A-Za-z0-9_.]*|Unreal[A-Za-z0-9_.]*|Godot[A-Za-z0-9_.]*|UE\d+|\d+[._]\d+(?:[._]\d+)*)$",
+    re.IGNORECASE,
+)
+
 
 def parse_pack_page(session: requests.Session, pack_url: str, pack_title: str) -> list[RemoteFile]:
     response = session.get(pack_url, timeout=30)
@@ -303,11 +309,19 @@ def parse_pack_page(session: requests.Session, pack_url: str, pack_title: str) -
                     base_parts.append(text)
         base_name = " ".join(base_parts).strip()
 
-        # source-files entries embed the version inline, e.g. "..._Source_Files | v4"
+        # source-files / engine entries embed the version inline,
+        # e.g. "..._Source_Files | v4" or "..._2022_3 | v1_2_0"
         inline_match = _VERSION_RE.match(base_name)
         if inline_match and not variant_text:
-            base_name = inline_match.group("variant").strip()
-            variant_text = f"SOURCE | {inline_match.group('version')}"
+            raw_base = inline_match.group("variant").strip()
+            inline_version = inline_match.group("version")
+            suffix_match = _VARIANT_SUFFIX_RE.search(raw_base)
+            if suffix_match:
+                base_name = raw_base[: suffix_match.start()]
+                variant_text = f"{suffix_match.group(1)} | {inline_version}"
+            else:
+                base_name = raw_base
+                variant_text = f"SOURCE | {inline_version}"
 
         variant, version = None, None
         if variant_text:
@@ -318,7 +332,15 @@ def parse_pack_page(session: requests.Session, pack_url: str, pack_title: str) -
             else:
                 variant = variant_text
 
-        is_icon = base_name.lower().endswith(".png") and "_ICON" in base_name.upper()
+        # heading without a separator may still carry an implicit variant suffix
+        # e.g. "SIMPLE_Port_Source_Files" -> base=SIMPLE_Port, variant=Source_Files
+        if variant is None:
+            suffix_match = _VARIANT_SUFFIX_RE.search(base_name)
+            if suffix_match:
+                variant = suffix_match.group(1)
+                base_name = base_name[: suffix_match.start()]
+
+        is_icon = "_ICON" in base_name.upper() and base_name.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))
 
         download_link = wrap.select_one(".sky-pilot-actions a.sky-pilot-button")
         if not download_link or not download_link.get("href"):
@@ -358,24 +380,38 @@ def find_or_make_pack_dir(root: Path, pack_title: str, dry_run: bool) -> Path:
     return new_dir
 
 
-_LOCAL_NAME_RE = re.compile(
-    r"^(?P<base>.+?)_(?P<variant>(?:Unity|Unreal|Godot|SourceFiles|Source_Files|UE)[A-Za-z0-9_]*)_"
-    r"(?P<version>v[\d_.]+(?:[A-Z][A-Z0-9_]*)?)"
-    r"(?P<ext>\.[A-Za-z][A-Za-z0-9]*)?$"
-)
+_LOCAL_VERSION_RE = re.compile(r"_(?P<version>v[\d_.]+(?:[A-Z][A-Z0-9_]*)?)$")
+_LOCAL_ICON_RE = re.compile(r"^(?P<base>.+)_ICON$", re.IGNORECASE)
+_ICON_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 
 
 def parse_local_filename(path: Path) -> Optional[LocalFile]:
-    # e.g. POLYGON_BattleRoyale_Unity_2022_3_v1_9_0.unitypackage
     stem = path.stem
-    match = _LOCAL_NAME_RE.match(stem)
-    if not match:
+
+    icon_match = _LOCAL_ICON_RE.match(stem)
+    if icon_match and path.suffix.lower() in _ICON_EXTS:
+        return LocalFile(
+            path=path,
+            base_name=icon_match.group("base"),
+            variant="ICON",
+            version=None,
+        )
+
+    version: Optional[str] = None
+    rest = stem
+    version_match = _LOCAL_VERSION_RE.search(stem)
+    if version_match:
+        version = version_match.group("version")
+        rest = stem[: version_match.start()]
+
+    suffix_match = _VARIANT_SUFFIX_RE.search(rest)
+    if not suffix_match:
         return None
     return LocalFile(
         path=path,
-        base_name=match.group("base"),
-        variant=match.group("variant"),
-        version=match.group("version"),
+        base_name=rest[: suffix_match.start()],
+        variant=suffix_match.group(1),
+        version=version,
     )
 
 
@@ -584,14 +620,16 @@ def main():
     for remote, pack_dir, action, existing_paths in plan:
         if action == "skip":
             continue
-        rows.append((f"[{action}]", remote.pack_title, expected_filename(remote, existing_paths), str(pack_dir), existing_paths))
+        new_name = expected_filename(remote, existing_paths)
+        new_ext = Path(new_name).suffix.lower()
+        shown_existing = [path for path in existing_paths if path.suffix.lower() == new_ext] if new_ext else list(existing_paths)
+        rows.append((f"[{action}]", remote.pack_title, new_name, str(pack_dir), shown_existing))
     if rows:
         headers = ("Status", "Pack", "New file", "Destination")
         widths = [max(len(headers[i]), max(len(row[i]) for row in rows)) for i in range(4)]
         for row in rows:
-            if row[4]:
-                existing_str = f"(existing: {', '.join(path.name for path in row[4])})"
-                widths[2] = max(widths[2], len(existing_str))
+            for path in row[4]:
+                widths[2] = max(widths[2], len(f"(existing: {path.name})"))
 
         def _hline(left: str, mid: str, right: str) -> str:
             return left + mid.join("─" * (width + 2) for width in widths) + right
@@ -602,11 +640,10 @@ def main():
         print(_hline("╭", "┬", "╮"))
         print(_row(headers))
         print(_hline("├", "┼", "┤"))
-        for i, (status_cell, pack_cell, new_name, dest_path, existing_paths) in enumerate(rows):
+        for i, (status_cell, pack_cell, new_name, dest_path, shown_existing) in enumerate(rows):
             print(_row((status_cell, pack_cell, new_name, dest_path)))
-            if existing_paths:
-                existing_str = f"(existing: {', '.join(path.name for path in existing_paths)})"
-                print(_row(("", "", existing_str, "")))
+            for path in shown_existing:
+                print(_row(("", "", f"(existing: {path.name})", "")))
             if i < len(rows) - 1:
                 print(_hline("├", "┼", "┤"))
         print(_hline("╰", "┴", "╯"))
