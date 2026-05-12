@@ -1,0 +1,150 @@
+# synty_sync
+
+Sync your Synty Store library to a local folder. Detects new packs, version bumps, and skips files you already have.
+
+## WHY
+
+Built this mostly for myself, I'm a bit of a digital hoarder and wanted a way to keep my full Synty library on disk and in sync without manually clicking through dozens of packs every time something updates.
+
+THIS IS A TOOL FOR DOWNLOADING LEGALLY ACQUIRED SYNTY PACKS FROM THE OFFICIAL SYNTY WEBSITE (https://syntystore.com). SYNTY'S TERMS OF SERVICE APPLY TO THE ASSETS; THE SCRIPT DOES NOT CHANGE ANYTHING ABOUT LICENSING OR ATTRIBUTION.
+
+## HOW
+
+### Quick start
+
+```powershell
+pip install -r requirements.txt
+python synty_sync.py --path "path/to/folder" --dry-run
+```
+
+The first run with `--dry-run` shows you exactly what will be downloaded and where, without touching the filesystem. Drop `--dry-run` to actually download.
+
+### Cookies setup
+
+The script authenticates by reading cookies your browser already has after you log into syntystore.com. There is no automated login.
+
+1. Log into https://syntystore.com in your browser.
+2. Install **Get cookies.txt LOCALLY** for [Firefox](https://addons.mozilla.org/en-US/firefox/addon/get-cookies-txt-locally/) or [Chrome](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc).
+3. While on syntystore.com, click the extension and export cookies as `cookies.txt`.
+4. Save it next to `synty_sync.py` (or pass `--cookies "path/to/cookies.txt"`).
+
+When cookies expire, the script reports "Could not detect customer id" or "Authentication failed". Repeat the process again to refresh.
+
+### CLI flags
+
+| Flag | Description |
+|---|---|
+| `--path "path/to/folder"` | **Required.** Local folder where pack subfolders live. |
+| `--cookies "path/to/cookies.txt"` | Path to `cookies.txt` (Netscape format). Defaults to `cookies.txt` next to the script. |
+| `--dry-run` | Print the plan and exit. No files written. |
+| `--force` | Re-download every file, ignoring local versions. |
+| `--pack "substring"` | Only sync packs whose title contains this substring. Repeatable. |
+| `--no-icons` | Skip ICON `.png` / `.jpg` files. |
+| `--formats unity,unreal,godot,source` | Comma-separated engine variants to include. Omit to include all. |
+| `--latest-only` | Per pack, keep only the newest version of each engine family. |
+| `--workers N` | Concurrent downloads. Default 4. |
+
+### Common workflows
+
+```powershell
+# Preview
+python synty_sync.py --path "path/to/folder" --dry-run
+
+# Sync everything to a specified folder
+python synty_sync.py --path "path/to/folder"
+
+# Sync everything to a specified folder with 8 workers (faster, but can hit download limits)
+python synty_sync.py --path "path/to/folder" --workers 8
+
+# Sync everything to a specified folder with a custom cookies file path (can be in a different folder/disk)
+python synty_sync.py --path "path/to/folder" --cookies "C:/secrets/cookies.txt"
+
+# Sync only the specified pack to a specified folder (e.g. POLYGON - City pack)
+python synty_sync.py --path "path/to/folder" --pack "POLYGON - City"
+
+# Sync multiple packs to a specified folder with filters, e.g. only titles containing "POLYGON" OR "SIMPLE"
+python synty_sync.py --path "path/to/folder" --pack "POLYGON" --pack "SIMPLE"
+
+# Preview if there is something new to download/upgrade in packs with "Sci-Fi" in the title
+python synty_sync.py --path "path/to/folder" --pack "Sci-Fi" --dry-run
+
+# Sync only latest Unity packs to a specified folder
+python synty_sync.py --path "path/to/folder" --formats unity --latest-only
+
+# Sync only source files without icons to a specified folder
+python synty_sync.py --path "path/to/folder" --formats source --no-icons
+
+# Sync only Unity and Unreal files without icons to a specified folder
+python synty_sync.py --path "path/to/folder" --formats unity,unreal --no-icons
+
+# Sync only latest Unity packs without icons to a specified folder
+python synty_sync.py --path "path/to/folder" --formats unity --latest-only --no-icons
+
+# Preview if there is something new to download/upgrade for the latest Unity packs without icons
+python synty_sync.py --path "path/to/folder" --formats unity --latest-only --no-icons --dry-run
+
+# Preview if there is something new to download/upgrade for packs with "Battle Royale" in the title using 1 worker
+python synty_sync.py --path "path/to/folder" --pack "Battle Royale" --workers 1 --dry-run
+
+# Force re-download EVERY file (useful if something seems corrupted)
+python synty_sync.py --path "path/to/folder" --force
+
+# Re-download EVERY file from only "POLYGON - City pack" to a specified folder
+python synty_sync.py --path "path/to/folder" --pack "POLYGON - City" --force
+```
+
+### Upgrade detection
+
+For each remote file the script identifies a **slot** based on `(base_name, engine_variant)`. For example:
+
+- `POLYGON_BattleRoyale_Unity_2022_3` is one slot
+- `POLYGON_BattleRoyale_Unity_2021_3` is a different slot
+- `POLYGON_BattleRoyale_Unreal_5_4` is yet another
+
+Within each slot, the local pack folder is scanned for files of the same slot. Three actions can result:
+
+- **`first-download`**: no file in this slot exists locally; download it.
+- **`new-version`**: a same-slot file exists locally with a different version; download the new one. The old file is **kept**, not deleted.
+- **`skip`**: same version (or a newer one) is already on disk. Nothing happens.
+
+`--latest-only` collapses multiple engine-version slots into one group keyed by **engine family** (Unity / Unreal / Godot / Source). The newest `(engine_version, pack_version)` wins. So an asset with Unreal 4.25, 5.0, and 5.4 builds will plan only the 5.4 build under `--latest-only`.
+
+`--no-icons` excludes ICON files. `--formats` excludes engine variants you don't want, but never affects icons, so use both flags together if needed.
+
+### Output
+
+After parsing, you will be able to see a table of every planned file with columns `Status / Pack / New file / Destination`, and a summary table showing per-action count and total size, e.g.:
+
+```
+SUMMARY:
+╭──────────────────────┬─────────────╮
+│ Action               │ Count       │
+├──────────────────────┼─────────────┤
+│ first-download       │ 43 (2.3GB)  │
+├──────────────────────┼─────────────┤
+│ new-version          │ 1 (0.1GB)   │
+├──────────────────────┼─────────────┤
+│ skip                 │ 357 (25GB)  │
+├──────────────────────┼─────────────┤
+│ TOTAL TO DOWNLOAD:   │ 44 (2.4GB)  │
+╰──────────────────────┴─────────────╯
+```
+
+In `--dry-run` the script stops after parsing the library. In normal mode it prompts if you actually want to download files (after previewing summary and all files):
+
+```
+[•] Download 44 files (2.4GB)? [Y/n]:
+```
+
+Press `Y` or `Enter` to start the download, anything else to abort. After download finishes:
+
+- If all files are OK, you will see: `[✓] Done.`
+- If some files failed, you will see an interactive prompt `[•] N download(s) failed. Retry? [Y/n]:`. Press `Y` or `Enter` to re-run only the failed items, press anything else to cancel. It will loop until everything is downloaded or you interrupt (with `Ctrl+C`).
+
+A `manifest.json` is written into `--path` recording every successful download (sha256, size, version, action).
+
+### Known issues
+
+- **HTTP 503 mid-download**: Synty's CDN occasionally rate-limits. First, just wait a few minutes and let the limit reset. Then use the retry prompt at the end of the run, or rerun with `--workers 2` to reduce concurrency.
+- **`[WinError 32]` on rename**: Windows antivirus briefly locks the freshly downloaded `.part` file. The retry prompt at the end of the run almost always clears it.
+- **`Could not detect customer id`**: cookies.txt is missing required entries or expired. Repeat the Cookies setup step.
