@@ -391,7 +391,7 @@ def decide_action(remote: RemoteFile, pack_dir: Path, force: bool) -> tuple[str,
     if not pack_dir.exists():
         return ("first-download", [])
 
-    same_slot = []  # (LocalFile, version_tuple)
+    same_slot = []  # (LocalFile, (engine_version_tuple, pack_version_tuple))
     for child in pack_dir.iterdir():
         if not child.is_file():
             continue
@@ -405,24 +405,23 @@ def decide_action(remote: RemoteFile, pack_dir: Path, force: bool) -> tuple[str,
             continue
         if local.base_name.lower() != remote.base_name.lower():
             continue
-        # Unity_2021_x and Unity_2022_x are separate slots
+        # e.g. remote Unity_2022_3_v1_1_0 is an upgrade of local Unity_2021_3_v1_0_4
         if remote.variant and local.variant:
-            remote_variant = remote.variant.lower().replace("_", "")
-            local_variant = local.variant.lower().replace("_", "")
-            if local_variant != remote_variant:
+            if _engine_family(local.variant) != _engine_family(remote.variant):
                 continue
-        same_slot.append((local, version_tuple(local.version)))
+        local_key = (_engine_version_tuple(local.variant), version_tuple(local.version))
+        same_slot.append((local, local_key))
 
     if not same_slot:
         return ("first-download", [])
 
-    remote_version = remote.version_tuple
-    for local, local_version in same_slot:
-        if local_version == remote_version:
+    remote_key = (_engine_version_tuple(remote.variant), remote.version_tuple)
+    for local, local_key in same_slot:
+        if local_key == remote_key:
             return ("skip", [local.path])
     # if local is ahead of remote, skip rather than downgrade
     newest_local = max(same_slot, key=lambda entry: entry[1])
-    if newest_local[1] > remote_version:
+    if newest_local[1] > remote_key:
         return ("skip", [newest_local[0].path])
     sorted_paths = [local.path for local, _ in sorted(same_slot, key=lambda entry: entry[1])]
     return ("new-version", sorted_paths)
