@@ -28,7 +28,7 @@ The script authenticates by reading cookies your browser already has after you l
 3. While on syntystore.com, click the extension and export cookies as `cookies.txt`.
 4. Save it next to `synty_sync.py` (or pass `--cookies "path/to/cookies.txt"`).
 
-When cookies expire, the script reports "Could not detect customer id" or "Authentication failed". Repeat the process again to refresh.
+When cookies expire, the script reports "Could not detect customer id" or "Authentication failed". Repeat the process to refresh.
 
 ### CLI flags
 
@@ -49,46 +49,74 @@ When cookies expire, the script reports "Could not detect customer id" or "Authe
 ```powershell
 # Preview
 python synty_sync.py --path "path/to/folder" --dry-run
+```
 
-# Sync everything to a specified folder
-python synty_sync.py --path "path/to/folder"
-
-# Sync everything to a specified folder with 8 workers (faster, but can hit download limits)
-python synty_sync.py --path "path/to/folder" --workers 8
-
-# Sync everything to a specified folder with a custom cookies file path (can be in a different folder/disk)
-python synty_sync.py --path "path/to/folder" --cookies "C:/secrets/cookies.txt"
-
-# Sync only the specified pack to a specified folder (e.g. POLYGON - City pack)
-python synty_sync.py --path "path/to/folder" --pack "POLYGON - City"
-
-# Sync multiple packs to a specified folder with filters, e.g. only titles containing "POLYGON" OR "SIMPLE"
-python synty_sync.py --path "path/to/folder" --pack "POLYGON" --pack "SIMPLE"
-
+```powershell
 # Preview if there is something new to download/upgrade in packs with "Sci-Fi" in the title
 python synty_sync.py --path "path/to/folder" --pack "Sci-Fi" --dry-run
+```
 
-# Sync only latest Unity packs to a specified folder
-python synty_sync.py --path "path/to/folder" --formats unity --latest-only
-
-# Sync only source files without icons to a specified folder
-python synty_sync.py --path "path/to/folder" --formats source --no-icons
-
-# Sync only Unity and Unreal files without icons to a specified folder
-python synty_sync.py --path "path/to/folder" --formats unity,unreal --no-icons
-
-# Sync only latest Unity packs without icons to a specified folder
-python synty_sync.py --path "path/to/folder" --formats unity --latest-only --no-icons
-
+```powershell
 # Preview if there is something new to download/upgrade for the latest Unity packs without icons
 python synty_sync.py --path "path/to/folder" --formats unity --latest-only --no-icons --dry-run
+```
 
+```powershell
 # Preview if there is something new to download/upgrade for packs with "Battle Royale" in the title using 1 worker
 python synty_sync.py --path "path/to/folder" --pack "Battle Royale" --workers 1 --dry-run
+```
 
+```powershell
+# Sync everything to a specified folder
+python synty_sync.py --path "path/to/folder"
+```
+
+```powershell
+# Sync everything to a specified folder with 8 workers (faster, but can hit download limits)
+python synty_sync.py --path "path/to/folder" --workers 8
+```
+
+```powershell
+# Sync everything to a specified folder with a custom cookies file path (can be in a different folder/disk)
+python synty_sync.py --path "path/to/folder" --cookies "C:/secrets/cookies.txt"
+```
+
+```powershell
+# Sync only the specified pack to a specified folder (e.g. POLYGON - City pack)
+python synty_sync.py --path "path/to/folder" --pack "POLYGON - City"
+```
+
+```powershell
+# Sync multiple packs to a specified folder with filters, e.g. only titles containing "POLYGON" OR "SIMPLE"
+python synty_sync.py --path "path/to/folder" --pack "POLYGON" --pack "SIMPLE"
+```
+
+```powershell
+# Sync only latest Unity packs to a specified folder
+python synty_sync.py --path "path/to/folder" --formats unity --latest-only
+```
+
+```powershell
+# Sync only source files without icons to a specified folder
+python synty_sync.py --path "path/to/folder" --formats source --no-icons
+```
+
+```powershell
+# Sync only Unity and Unreal files without icons to a specified folder
+python synty_sync.py --path "path/to/folder" --formats unity,unreal --no-icons
+```
+
+```powershell
+# Sync only latest Unity packs without icons to a specified folder
+python synty_sync.py --path "path/to/folder" --formats unity --latest-only --no-icons
+```
+
+```powershell
 # Force re-download EVERY file (useful if something seems corrupted)
 python synty_sync.py --path "path/to/folder" --force
+```
 
+```powershell
 # Re-download EVERY file from only "POLYGON - City pack" to a specified folder
 python synty_sync.py --path "path/to/folder" --pack "POLYGON - City" --force
 ```
