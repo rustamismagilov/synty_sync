@@ -2,6 +2,8 @@
 
 Sync your Synty Store library to a local folder. Detects new packs, version bumps, and skips files you already have.
 
+> **Windows only.** Tested on Windows 11 with PowerShell. May work on macOS/Linux but has not yet been verified.
+
 ## WHY
 
 Built this mostly for myself, I'm a bit of a digital hoarder and wanted a way to keep my full Synty library on disk and in sync without manually clicking through dozens of packs every time something updates.
@@ -13,6 +15,8 @@ THIS IS A TOOL FOR DOWNLOADING LEGALLY ACQUIRED SYNTY PACKS FROM THE OFFICIAL SY
 ### Quick start
 
 ```powershell
+git clone https://github.com/rustamismagilov/synty_sync.git
+cd synty_sync
 pip install -r requirements.txt
 python synty_sync.py --path "path/to/folder" --dry-run
 ```
