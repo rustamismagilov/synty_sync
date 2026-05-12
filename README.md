@@ -62,7 +62,7 @@ python synty_sync.py --path "path/to/folder" --formats unity --latest-only --no-
 ```
 
 ```powershell
-# Preview if there is something new to download/upgrade for packs with "Battle Royale" in the title using 1 worker
+# Preview packs with "Battle Royale" in the title using 1 worker
 python synty_sync.py --path "path/to/folder" --pack "Battle Royale" --workers 1 --dry-run
 ```
 
@@ -77,7 +77,7 @@ python synty_sync.py --path "path/to/folder" --workers 8
 ```
 
 ```powershell
-# Sync everything to a specified folder with a custom cookies file path (can be in a different folder/disk)
+# Sync everything with a custom cookies file path (can be in a different folder/disk)
 python synty_sync.py --path "path/to/folder" --cookies "C:/secrets/cookies.txt"
 ```
 
@@ -87,7 +87,7 @@ python synty_sync.py --path "path/to/folder" --pack "POLYGON - City"
 ```
 
 ```powershell
-# Sync multiple packs to a specified folder with filters, e.g. only titles containing "POLYGON" OR "SIMPLE"
+# Sync packs whose title contains "POLYGON" OR "SIMPLE"
 python synty_sync.py --path "path/to/folder" --pack "POLYGON" --pack "SIMPLE"
 ```
 
