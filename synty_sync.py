@@ -278,6 +278,9 @@ _VARIANT_SUFFIX_RE = re.compile(
     re.IGNORECASE,
 )
 
+# trailing "(340 KB)" / "(1.2 MB)" sometimes baked into a Synty heading text
+_SIZE_TAIL_RE = re.compile(r"\s*\(\s*[\d.]+\s*(?:B|KB|MB|GB|TB)\s*\)\s*$", re.IGNORECASE)
+
 
 def parse_pack_page(session: requests.Session, pack_url: str, pack_title: str) -> list[RemoteFile]:
     response = session.get(pack_url, timeout=30)
@@ -308,6 +311,12 @@ def parse_pack_page(session: requests.Session, pack_url: str, pack_title: str) -
                 if text:
                     base_parts.append(text)
         base_name = " ".join(base_parts).strip()
+
+        # Synty occasionally inlines the file size into the heading text instead of
+        # using a separate sky-pilot-file-size span, e.g. "...| v2(340 KB)"
+        if variant_text:
+            variant_text = _SIZE_TAIL_RE.sub("", variant_text).strip() or None
+        base_name = _SIZE_TAIL_RE.sub("", base_name).strip()
 
         # source-files / engine entries embed the version inline,
         # e.g. "..._Source_Files | v4" or "..._2022_3 | v1_2_0"
