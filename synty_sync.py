@@ -15,6 +15,7 @@ from urllib.parse import urljoin, urlparse, parse_qs
 
 import requests
 from bs4 import BeautifulSoup
+from send2trash import send2trash
 from tqdm import tqdm
 
 LIBRARY_URL_TEMPLATE = "https://syntystore.com/apps/downloads/orders/{customer_id}"
@@ -472,6 +473,56 @@ def decide_action(remote: RemoteFile, pack_dir: Path, force: bool) -> tuple[str,
     return ("new-version", sorted_paths)
 
 
+def _collect_prune_candidates(plan: list) -> tuple[list[Path], set[Path]]:
+    prune_set: set[Path] = set()
+    new_version_paths: set[Path] = set()
+
+    # files explicitly marked as backups are never auto-pruned
+    def _is_protected(path: Path) -> bool:
+        upper = path.name.upper()
+        return "_ARCHIVED" in upper or "_BACKUP" in upper or "_KEEP" in upper
+
+    for remote, _pack_dir, action, existing_paths in plan:
+        if action != "new-version":
+            continue
+        new_ext = Path(expected_filename(remote, existing_paths)).suffix.lower()
+        for old_path in existing_paths:
+            if new_ext and old_path.suffix.lower() != new_ext:
+                continue
+            if _is_protected(old_path):
+                continue
+            prune_set.add(old_path)
+            new_version_paths.add(old_path)
+
+    seen_dirs: set[Path] = set()
+    for _remote, pack_dir, _action, _existing_paths in plan:
+        if pack_dir in seen_dirs or not pack_dir.exists():
+            continue
+        seen_dirs.add(pack_dir)
+
+        groups: dict[tuple, list] = {}
+        for child in pack_dir.iterdir():
+            if not child.is_file() or child.name == "manifest.json":
+                continue
+            local = parse_local_filename(child)
+            if not local or local.variant == "ICON":
+                continue
+            family = _engine_family(local.variant)
+            slot_key = (local.base_name.lower(), family, child.suffix.lower())
+            composite = (_engine_version_tuple(local.variant), version_tuple(local.version))
+            groups.setdefault(slot_key, []).append((child, composite))
+
+        for entries in groups.values():
+            if len(entries) < 2:
+                continue
+            newest_key = max(key for _, key in entries)
+            for path, key in entries:
+                if key < newest_key and not _is_protected(path):
+                    prune_set.add(path)
+
+    return sorted(prune_set), new_version_paths
+
+
 def download_file(session: requests.Session, remote: RemoteFile, pack_dir: Path,
                   pbar_position: int = 0) -> tuple[str, Path, Optional[str]]:
     with session.get(remote.download_url, stream=True, allow_redirects=True, timeout=60) as response:
@@ -521,6 +572,8 @@ def main():
                         help="Comma-separated engine variants to include: unity,unreal,godot,source. Omit to include all. Icons are controlled by --no-icons.")
     parser.add_argument("--latest-only", action="store_true",
                         help="Per pack, keep only the newest version of EACH engine family")
+    parser.add_argument("--prune-old", action="store_true",
+                        help="After a new-version download, delete older same-slot files on disk. Use --dry-run to preview.")
     parser.add_argument("--workers", type=int, default=4, help="Concurrent downloads (default 4)")
     args = parser.parse_args()
 
@@ -596,10 +649,24 @@ def main():
     to_download = [entry for entry in plan if entry[2] != "skip"]
     total_dl_bytes = sum(byte_count for action, byte_count in sizes.items() if action != "skip")
 
+    prune_paths: list[Path] = []
+    prune_new_version_paths: set[Path] = set()
+    prune_bytes = 0
+    if args.prune_old:
+        prune_paths, prune_new_version_paths = _collect_prune_candidates(plan)
+        for old_path in prune_paths:
+            try:
+                prune_bytes += old_path.stat().st_size
+            except OSError:
+                pass
+    prune_count = len(prune_paths)
+
     def _print_summary() -> None:
         sum_rows: list[tuple[str, str]] = []
         for action, count in sorted(counts.items()):
             sum_rows.append((action, f"{count} ({_format_bytes(sizes.get(action, 0))})"))
+        if args.prune_old and prune_count:
+            sum_rows.append(("prune", f"{prune_count} ({_format_bytes(prune_bytes)})"))
         sum_rows.append((
             "TOTAL TO DOWNLOAD:",
             f"{len(to_download)} ({_format_bytes(total_dl_bytes)})",
@@ -624,6 +691,9 @@ def main():
                 print(_sum_hline("├", "┼", "┤"))
         print(_sum_hline("╰", "┴", "╯"))
 
+    def _existing_label(action: str) -> str:
+        return "prune" if args.prune_old and action == "new-version" else "existing"
+
     print()
     rows = []
     for remote, pack_dir, action, existing_paths in plan:
@@ -632,13 +702,14 @@ def main():
         new_name = expected_filename(remote, existing_paths)
         new_ext = Path(new_name).suffix.lower()
         shown_existing = [path for path in existing_paths if path.suffix.lower() == new_ext] if new_ext else list(existing_paths)
-        rows.append((f"[{action}]", remote.pack_title, new_name, str(pack_dir), shown_existing))
+        rows.append((f"[{action}]", remote.pack_title, new_name, str(pack_dir), shown_existing, action))
     if rows:
         headers = ("Status", "Pack", "New file", "Destination")
         widths = [max(len(headers[i]), max(len(row[i]) for row in rows)) for i in range(4)]
         for row in rows:
+            label = _existing_label(row[5])
             for path in row[4]:
-                widths[2] = max(widths[2], len(f"(existing: {path.name})"))
+                widths[2] = max(widths[2], len(f"({label}: {path.name})"))
 
         def _hline(left: str, mid: str, right: str) -> str:
             return left + mid.join("─" * (width + 2) for width in widths) + right
@@ -649,101 +720,159 @@ def main():
         print(_hline("╭", "┬", "╮"))
         print(_row(headers))
         print(_hline("├", "┼", "┤"))
-        for i, (status_cell, pack_cell, new_name, dest_path, shown_existing) in enumerate(rows):
+        for i, (status_cell, pack_cell, new_name, dest_path, shown_existing, raw_action) in enumerate(rows):
             print(_row((status_cell, pack_cell, new_name, dest_path)))
+            label = _existing_label(raw_action)
             for path in shown_existing:
-                print(_row(("", "", f"(existing: {path.name})", "")))
+                print(_row(("", "", f"({label}: {path.name})", "")))
             if i < len(rows) - 1:
                 print(_hline("├", "┼", "┤"))
         print(_hline("╰", "┴", "╯"))
+
+    if args.prune_old:
+        extras = [p for p in prune_paths if p not in prune_new_version_paths]
+        if extras:
+            extras_rows = []
+            for path in extras:
+                try:
+                    size_str = _format_bytes(path.stat().st_size)
+                except OSError:
+                    size_str = "?"
+                extras_rows.append((path.parent.name, path.name, size_str))
+            ph = ("Pack", "File", "Size")
+            ew0 = max(len(ph[0]), max(len(r[0]) for r in extras_rows))
+            ew1 = max(len(ph[1]), max(len(r[1]) for r in extras_rows))
+            ew2 = max(len(ph[2]), max(len(r[2]) for r in extras_rows))
+
+            def _ex_hline(left: str, mid: str, right: str) -> str:
+                return left + mid.join("─" * (w + 2) for w in (ew0, ew1, ew2)) + right
+
+            def _ex_row(c0: str, c1: str, c2: str) -> str:
+                return f"│ {c0:<{ew0}} │ {c1:<{ew1}} │ {c2:>{ew2}} │"
+
+            print("\nPRUNE LIST:")
+            print(_ex_hline("╭", "┬", "╮"))
+            print(_ex_row(*ph))
+            print(_ex_hline("├", "┼", "┤"))
+            for i, row in enumerate(extras_rows):
+                print(_ex_row(*row))
+                if i < len(extras_rows) - 1:
+                    print(_ex_hline("├", "┼", "┤"))
+            print(_ex_hline("╰", "┴", "╯"))
     _print_summary()
 
     if args.dry_run:
         return
+
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
 
     if not to_download:
         if plan:
             print(f"{TAG_OK} Nothing to download. Every file in your local library is already up to date.")
         else:
             print(f"{TAG_OK} Nothing to download. No files matched the current filters.")
-        return
-
-    try:
-        answer = input(
-            f"\n{TAG_INFO} Download {len(to_download)} files ({_format_bytes(total_dl_bytes)})? [Y/n]: "
-        ).strip().lower()
-    except EOFError:
-        answer = "n"
-    if answer not in ("", "y", "yes"):
-        print(f"{TAG_INFO} Aborted.")
-        return
-
-    manifest_path = root / "manifest.json"
-    manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
-
-    def _do(item):
-        remote, pack_dir, _action, _existing_paths = item
-        pack_dir.mkdir(parents=True, exist_ok=True)
+    else:
         try:
-            _, path, sha = download_file(session, remote, pack_dir)
-            return (item, path, sha, None)
-        except Exception as exc:
-            return (item, None, None, str(exc))
-
-    remaining = list(to_download)
-    failed_items: list = []
-    attempt = 0
-    while remaining:
-        attempt += 1
-        label = "Downloading" if attempt == 1 else f"Retry {attempt - 1}: re-downloading"
-        print(f"\n{TAG_INFO} {label} {len(remaining)} files with {args.workers} workers...")
-
-        failed_items = []
-        downloaded_bytes = 0
-        with ThreadPoolExecutor(max_workers=args.workers) as executor:
-            futures = [executor.submit(_do, item) for item in remaining]
-            files_bar = tqdm(as_completed(futures), total=len(futures), desc="Files", ascii=" ░▒▓█",
-                             bar_format=_BAR_FMT.replace("@TOTAL@", "0B"))
-            for future in files_bar:
-                item, path, sha, err = future.result()
-                remote = item[0]
-                action = item[2]
-                if err:
-                    tqdm.write(f"  {TAG_ERR} {remote.base_name}: {err}")
-                    failed_items.append(item)
-                    continue
-                try:
-                    downloaded_bytes += path.stat().st_size
-                except OSError:
-                    pass
-                files_bar.bar_format = _BAR_FMT.replace("@TOTAL@", _format_bytes(downloaded_bytes))
-                key = str(path.relative_to(root))
-                manifest[key] = {
-                    "pack": remote.pack_title,
-                    "base": remote.base_name,
-                    "variant": remote.variant,
-                    "version": remote.version,
-                    "size": remote.size_str,
-                    "sha256": sha,
-                    "downloaded_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                    "action": action,
-                }
-                manifest_path.write_text(json.dumps(manifest, indent=2))
-
-        if not failed_items:
-            break
-
-        try:
-            answer = input(f"\n{TAG_INFO} {len(failed_items)} download(s) failed. Retry? [Y/n]: ").strip().lower()
+            answer = input(
+                f"\n{TAG_INFO} Download {len(to_download)} files ({_format_bytes(total_dl_bytes)})? [Y/n]: "
+            ).strip().lower()
         except EOFError:
             answer = "n"
         if answer not in ("", "y", "yes"):
-            break
-        remaining = failed_items
+            print(f"{TAG_INFO} Aborted.")
+            return
 
-    if failed_items:
-        print(f"{TAG_ERR} {len(failed_items)} download(s) still failed after retries.")
-    print(f"{TAG_OK} Done.")
+        def _do(item):
+            remote, pack_dir, _action, _existing_paths = item
+            pack_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                _, path, sha = download_file(session, remote, pack_dir)
+                return (item, path, sha, None)
+            except Exception as exc:
+                return (item, None, None, str(exc))
+
+        remaining = list(to_download)
+        failed_items: list = []
+        attempt = 0
+        while remaining:
+            attempt += 1
+            label = "Downloading" if attempt == 1 else f"Retry {attempt - 1}: re-downloading"
+            print(f"\n{TAG_INFO} {label} {len(remaining)} files with {args.workers} workers...")
+
+            failed_items = []
+            downloaded_bytes = 0
+            with ThreadPoolExecutor(max_workers=args.workers) as executor:
+                futures = [executor.submit(_do, item) for item in remaining]
+                files_bar = tqdm(as_completed(futures), total=len(futures), desc="Files", ascii=" ░▒▓█",
+                                 bar_format=_BAR_FMT.replace("@TOTAL@", "0B"))
+                for future in files_bar:
+                    item, path, sha, err = future.result()
+                    remote = item[0]
+                    action = item[2]
+                    if err:
+                        tqdm.write(f"  {TAG_ERR} {remote.base_name}: {err}")
+                        failed_items.append(item)
+                        continue
+                    try:
+                        downloaded_bytes += path.stat().st_size
+                    except OSError:
+                        pass
+                    files_bar.bar_format = _BAR_FMT.replace("@TOTAL@", _format_bytes(downloaded_bytes))
+                    key = str(path.relative_to(root))
+                    manifest[key] = {
+                        "pack": remote.pack_title,
+                        "base": remote.base_name,
+                        "variant": remote.variant,
+                        "version": remote.version,
+                        "size": remote.size_str,
+                        "sha256": sha,
+                        "downloaded_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "action": action,
+                    }
+                    manifest_path.write_text(json.dumps(manifest, indent=2))
+
+            if not failed_items:
+                break
+
+            try:
+                answer = input(f"\n{TAG_INFO} {len(failed_items)} download(s) failed. Retry? [Y/n]: ").strip().lower()
+            except EOFError:
+                answer = "n"
+            if answer not in ("", "y", "yes"):
+                break
+            remaining = failed_items
+
+        if failed_items:
+            print(f"{TAG_ERR} {len(failed_items)} download(s) still failed after retries.")
+        print(f"{TAG_OK} Done.")
+
+    if args.prune_old:
+        prune_paths_final, _ = _collect_prune_candidates(plan)
+        if not prune_paths_final:
+            print(f"{TAG_OK} No old versions to prune.")
+        else:
+            total = 0
+            for path in prune_paths_final:
+                try:
+                    total += path.stat().st_size
+                except OSError:
+                    pass
+            print(f"\n{TAG_INFO} Pruning {len(prune_paths_final)} files ({_format_bytes(total)})...")
+            failures = 0
+            for path in tqdm(prune_paths_final, desc="Pruning", ascii=" ░▒▓█",
+                             bar_format=_BAR_FMT.replace("@TOTAL@", _format_bytes(total))):
+                try:
+                    send2trash(str(path))
+                    manifest.pop(str(path.relative_to(root)), None)
+                except OSError as exc:
+                    tqdm.write(f"  {TAG_ERR} could not prune {path.name}: {exc}")
+                    failures += 1
+            manifest_path.write_text(json.dumps(manifest, indent=2))
+            if failures:
+                print(f"{TAG_ERR} {failures} prune(s) failed.")
+            else:
+                print(f"{TAG_OK} Pruned {len(prune_paths_final)} files.")
 
 
 if __name__ == "__main__":

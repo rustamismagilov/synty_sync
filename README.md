@@ -46,6 +46,7 @@ When cookies expire, the script reports "Could not detect customer id" or "Authe
 | `--no-icons` | Skip ICON `.png` / `.jpg` files. |
 | `--formats unity,unreal,godot,source` | Comma-separated engine variants to include. Omit to include all. |
 | `--latest-only` | Per pack, keep only the newest version of each engine family. |
+| `--prune-old` | Keep only the newest version of each build. Older copies go to the Recycle Bin. Combine with `--dry-run` to preview. |
 | `--workers N` | Concurrent downloads. Default 4. |
 
 ### Common workflows
@@ -136,8 +137,12 @@ For each remote file the script identifies a **slot** based on `(base_name, engi
 Within each slot, the local pack folder is scanned for files of the same slot. Three actions can result:
 
 - **`first-download`**: no file in this slot exists locally; download it.
-- **`new-version`**: a same-slot file exists locally with a different version; download the new one. The old file is **kept**, not deleted.
+- **`new-version`**: a same-slot file exists locally with a different version; download the new one. The old file is **kept by default**. Pass `--prune-old` to delete it after the new file lands.
 - **`skip`**: same version (or a newer one) is already on disk. Nothing happens.
+
+With `--prune-old`, the script also cleans up older versions sitting in your pack folders. For each slot, only the newest file stays on disk. Everything older is sent to the OS trash (Recycle Bin on Windows, Trash on macOS / Linux). Nothing is permanently deleted — you can restore from the trash if you change your mind. The output adds a **PRUNE LIST** showing exactly which files will be removed, plus a `prune` row in the summary with the total count and size. Always run with `--dry-run` first to preview.
+
+Want to keep an old version forever? Rename it to include `_ARCHIVED`, `_BACKUP`, or `_KEEP` anywhere in the name (any case) — those files are skipped on every future prune.
 
 `--latest-only` collapses multiple engine-version slots into one group keyed by **engine family** (Unity / Unreal / Godot / Source). The newest `(engine_version, pack_version)` wins. So an asset with Unreal 4.25, 5.0, and 5.4 builds will plan only the 5.4 build under `--latest-only`.
 
