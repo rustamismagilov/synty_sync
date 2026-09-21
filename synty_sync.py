@@ -472,8 +472,10 @@ def decide_action(remote: RemoteFile, pack_dir: Path, force: bool) -> tuple[str,
     for child in pack_dir.iterdir():
         if not child.is_file():
             continue
-        # icons match by full filename
-        if remote.is_icon:
+        # Icons and unversioned auxiliary files (e.g. Read_Me.txt) match
+        # by full filename; they have no engine/version suffix to parse.
+        if remote.is_icon or (remote.variant is None and remote.version is None
+                              and Path(remote.base_name).suffix):
             if child.name.lower() == remote.base_name.lower():
                 return ("skip", [child])
             continue
