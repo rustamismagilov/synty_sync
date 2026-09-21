@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, asdict
 from http.cookiejar import MozillaCookieJar
 from pathlib import Path
+from queue import Queue
 from typing import Optional
 from urllib.parse import urljoin, urlparse, parse_qs
 
@@ -541,8 +542,10 @@ def download_file(session: requests.Session, remote: RemoteFile, pack_dir: Path,
         hasher = hashlib.sha256()
         tmp_path = out_path.with_suffix(out_path.suffix + ".part")
         with open(tmp_path, "wb") as out_file, tqdm(
-            total=total, unit="B", unit_scale=True, desc=filename[:40],
-            position=pbar_position, leave=False, ascii=" ░▒▓█"
+            total=total or None, unit="B", unit_scale=True,
+            desc=f"Worker {pbar_position}: {filename[:40]}",
+            position=pbar_position, leave=False, ascii=" ░▒▓█",
+            dynamic_ncols=True, mininterval=0.2, disable=None,
         ) as bar:
             for chunk in response.iter_content(chunk_size=1024 * 256):
                 if not chunk:
@@ -783,14 +786,21 @@ def main():
             print(f"{TAG_INFO} Aborted.")
             return
 
+        progress_slots: Queue[int] = Queue()
+        for position in range(1, args.workers + 1):
+            progress_slots.put(position)
+
         def _do(item):
             remote, pack_dir, _action, _existing_paths = item
-            pack_dir.mkdir(parents=True, exist_ok=True)
+            position = progress_slots.get()
             try:
-                _, path, sha = download_file(session, remote, pack_dir)
+                pack_dir.mkdir(parents=True, exist_ok=True)
+                _, path, sha = download_file(session, remote, pack_dir, pbar_position=position)
                 return (item, path, sha, None)
             except Exception as exc:
                 return (item, None, None, str(exc))
+            finally:
+                progress_slots.put(position)
 
         remaining = list(to_download)
         failed_items: list = []
@@ -802,12 +812,14 @@ def main():
 
             failed_items = []
             downloaded_bytes = 0
-            with ThreadPoolExecutor(max_workers=args.workers) as executor:
+            with tqdm(total=len(remaining), desc="Files", position=0, ascii=" ░▒▓█",
+                      dynamic_ncols=True, mininterval=0.2, disable=None,
+                      bar_format=_BAR_FMT.replace("@TOTAL@", "0B")) as files_bar, \
+                    ThreadPoolExecutor(max_workers=args.workers) as executor:
                 futures = [executor.submit(_do, item) for item in remaining]
-                files_bar = tqdm(as_completed(futures), total=len(futures), desc="Files", ascii=" ░▒▓█",
-                                 bar_format=_BAR_FMT.replace("@TOTAL@", "0B"))
-                for future in files_bar:
+                for future in as_completed(futures):
                     item, path, sha, err = future.result()
+                    files_bar.update(1)
                     remote = item[0]
                     action = item[2]
                     if err:

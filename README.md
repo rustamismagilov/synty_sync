@@ -188,7 +188,11 @@ In `--dry-run` the script stops after parsing the library. In normal mode it pro
 [•] Download 44 files (2.4GB)? [Y/n]:
 ```
 
-Press `Y` or `Enter` to start the download, anything else to abort. After download finishes:
+Press `Y` or `Enter` to start the download, anything else to abort.
+
+During downloads, the overall `Files` counter stays at the top and each active worker has a separate progress row showing its current filename, bytes transferred, speed, and ETA. Rows are reused as files finish. Progress bars are disabled when output is redirected rather than displayed in a terminal.
+
+After download finishes:
 
 - If all files are OK, you will see: `[✓] Done.`
 - If some files failed, you will see an interactive prompt `[•] N download(s) failed. Retry? [Y/n]:`. Press `Y` or `Enter` to re-run only the failed items, press anything else to cancel. It will loop until everything is downloaded or you interrupt (with `Ctrl+C`).
