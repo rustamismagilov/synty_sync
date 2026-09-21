@@ -4,7 +4,9 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
 import sys
+import textwrap
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, asdict
@@ -38,6 +40,34 @@ def _color(code: str, text: str) -> str:
 TAG_INFO = _color("93", "[•]")   # yellow
 TAG_OK   = _color("92", "[✓]")   # green
 TAG_ERR  = _color("91", "[✗]")   # red
+
+
+def _fit_table_widths(widths: list[int]) -> list[int]:
+    """Reserve borders/padding and one spare terminal column to avoid auto-wrap."""
+    available = max(len(widths), shutil.get_terminal_size((120, 24)).columns - 1
+                    - (3 * len(widths) + 1))
+    widths = list(widths)
+    while sum(widths) > available:
+        widest = max(range(len(widths)), key=widths.__getitem__)
+        widths[widest] -= 1
+    return widths
+
+
+def _wrapped_table_row(cells, widths) -> str:
+    # Break long filenames as well as prose; never truncate identifying text.
+    columns = [
+        [line for paragraph in str(cell).split("\n")
+         for line in (textwrap.wrap(paragraph, width=width,
+                                    break_long_words=True, break_on_hyphens=False) or [""])]
+        for cell, width in zip(cells, widths)
+    ]
+    return "\n".join(
+        "│ " + " │ ".join(
+            (column[line] if line < len(column) else "").ljust(width)
+            for column, width in zip(columns, widths)
+        ) + " │"
+        for line in range(max(map(len, columns)))
+    )
 
 
 @dataclass
@@ -678,11 +708,13 @@ def main():
         label_w = max(len(sum_headers[0]), max((len(label) for label, _ in sum_rows), default=0))
         count_w = max(len(sum_headers[1]), max((len(value) for _, value in sum_rows), default=1))
 
+        label_w, count_w = _fit_table_widths([label_w, count_w])
+
         def _sum_hline(left: str, mid: str, right: str) -> str:
             return left + mid.join("─" * (width + 2) for width in (label_w, count_w)) + right
 
         def _sum_row(label: str, value: str) -> str:
-            return f"│ {label:<{label_w}} │ {value:>{count_w}} │"
+            return _wrapped_table_row((label, value), (label_w, count_w))
 
         print("\nSUMMARY:")
         print(_sum_hline("╭", "┬", "╮"))
@@ -714,11 +746,13 @@ def main():
             for path in row[4]:
                 widths[2] = max(widths[2], len(f"({label}: {path.name})"))
 
+        widths = _fit_table_widths(widths)
+
         def _hline(left: str, mid: str, right: str) -> str:
             return left + mid.join("─" * (width + 2) for width in widths) + right
 
         def _row(cells: tuple[str, ...]) -> str:
-            return "│ " + " │ ".join(cell.ljust(width) for cell, width in zip(cells, widths)) + " │"
+            return _wrapped_table_row(cells, widths)
 
         print(_hline("╭", "┬", "╮"))
         print(_row(headers))
@@ -747,11 +781,13 @@ def main():
             ew1 = max(len(ph[1]), max(len(r[1]) for r in extras_rows))
             ew2 = max(len(ph[2]), max(len(r[2]) for r in extras_rows))
 
+            ew0, ew1, ew2 = _fit_table_widths([ew0, ew1, ew2])
+
             def _ex_hline(left: str, mid: str, right: str) -> str:
                 return left + mid.join("─" * (w + 2) for w in (ew0, ew1, ew2)) + right
 
             def _ex_row(c0: str, c1: str, c2: str) -> str:
-                return f"│ {c0:<{ew0}} │ {c1:<{ew1}} │ {c2:>{ew2}} │"
+                return _wrapped_table_row((c0, c1, c2), (ew0, ew1, ew2))
 
             print("\nPRUNE LIST:")
             print(_ex_hline("╭", "┬", "╮"))
